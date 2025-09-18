@@ -1,0 +1,212 @@
+<div id="prov-root">
+  <style>
+    #prov-root .box{max-width:720px;margin:6px auto;padding:12px;border:1px solid var(--line);background:var(--panel);border-radius:14px}
+    #prov-root h3{margin:0 0 8px 0}
+    #prov-root .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    #prov-root label{font-size:.9rem;color:var(--muted)}
+    #prov-root input{padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f1116;color:var(--text)}
+    #prov-root .btn{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#1a1f2a;color:var(--text);cursor:pointer;font-weight:700}
+    #prov-root .muted{color:var(--muted)}
+    #prov-root .ok{background:#112a18;border:1px solid #1a3a24;color:#b8ffcf;padding:10px;border-radius:10px;display:none}
+    #prov-root .err{background:#2a1111;border:1px solid #3a1a1a;color:#ffb4b4;padding:10px;border-radius:10px;display:none}
+    #prov-root code{background:#0f1116;border:1px solid var(--line);padding:4px 6px;border-radius:8px}
+  </style>
+
+  <div class="box">
+    <h3>Provisionar nova instância</h3>
+    <p class="muted">Cria uma cópia da planilha <strong>template</strong> e registra o <code>SS_ID</code> na aba <strong>Instâncias</strong> da Planilha de Acessos. Usa a função <code>ensureInstanceFor(email)</code> do backend.</p>
+
+    <div id="prov-err" class="err" role="alert"></div>
+    <div id="prov-ok" class="ok" role="status"></div>
+
+    <div class="row" style="margin-top:6px">
+      <label for="prov-email">E-mail do cliente</label>
+      <input id="prov-email" type="email" placeholder="cliente@exemplo.com" autocomplete="email" style="min-width:280px"/>
+      <button class="btn" id="btn-prov" onclick="Provisionar.create()">Provisionar</button>
+      <button class="btn" id="btn-open" onclick="Provisionar.openSS()">Abrir planilha</button>
+      <button class="btn" id="btn-copy" onclick="Provisionar.copyId()">Copiar SS_ID</button>
+    </div>
+
+    <div class="row" style="margin-top:6px">
+      <span class="muted">SS_ID:</span>
+      <code id="prov-ssid">—</code>
+    </div>
+
+    <hr style="border-color:var(--line);opacity:.3;margin:12px 0"/>
+    <p class="muted">
+      <strong>Importante:</strong> este painel não cria usuários nem licenças.
+      Para o login funcionar, o e-mail deve existir nas abas <strong>Usuarios</strong> e <strong>Licencas</strong> (Status=sim) da Planilha de Acessos.
+    </p>
+  </div>
+</div>
+
+<script>
+  const Provisionar = {
+    els: {}, lastId: null,
+    init(){
+      const $ = id => document.getElementById(id);
+      this.els = {
+        email: $('prov-email'), ssid: $('prov-ssid'), ok: $('prov-ok'), err: $('prov-err')
+      };
+      // se houver e-mail do login, sugere
+      try {
+        const saved = localStorage.getItem('controlese:lastEmail');
+        if (saved) this.els.email.value = saved;
+      } catch(_){}
+      this.els.email.addEventListener('keydown', e=>{ if(e.key==='Enter') this.create(); });
+    },
+
+    setOk(msg){ this.els.ok.textContent = msg; this.els.ok.style.display='block'; this.els.err.style.display='none'; },
+    setErr(msg){ this.els.err.textContent = msg; this.els.err.style.display='block'; this.els.ok.style.display='none'; },
+
+    requireEmail(){
+      const email = (this.els.email.value||'').trim();
+      if (!email) throw new Error('Informe o e-mail do cliente.');
+      return email;
+    },
+
+    create(){
+      let email;
+      try { email = this.requireEmail(); } catch(e){ return this.setErr(e.message); }
+      this.setOk(''); this.setErr('');
+      // Chama função do backend (não exige token). Em produção, restrinja via regra de publicação.
+      google.script.run
+        .withSuccessHandler((id)=>{
+          this.lastId = id; this.els.ssid.textContent = id || '—';
+          if (id) this.setOk('Instância provisionada com sucesso!'); else this.setErr('Falha ao provisionar.');
+        })
+        .withFailureHandler((e)=>this.setErr(e && e.message ? e.message : 'Erro ao provisionar.'))
+        .ensureInstanceFor(email);
+    },
+
+    openSS(){
+      if (!this.lastId){ return this.setErr('Nenhum SS_ID disponível. Provisionar primeiro.'); }
+      const url = `https://docs.google.com/spreadsheets/d/${this.lastId}/edit`;
+      try { window.open(url, '_blank'); } catch(_){ location.href = url; }
+    },
+
+    copyId(){
+      if (!this.lastId) return this.setErr('Nada para copiar.');
+      navigator.clipboard.writeText(this.lastId).then(()=>{
+        this.setOk('SS_ID copiado para a área de transferência.');
+      }).catch(()=>{
+        this.setErr('Não foi possível copiar. Selecione e copie manualmente.');
+      });
+    }
+  };
+
+  try { Provisionar.init(); } catch(e){ console.error(e); }
+  window.Provisionar = Provisionar;
+</script><!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Provisionar • Controle$e</title>
+  <style>
+    :root{ --ok:#067d47; --ink:#0f172a; --muted:#667085; --line:#e6e8ef; --brand:#21a782; }
+    html,body{height:100%} body{margin:0;background:#f7f8fb;font:14px/1.45 system-ui,Segoe UI,Roboto,Arial}
+    .wrap{max-width:720px;margin:38px auto;padding:0 16px}
+    .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 16px;box-shadow:0 8px 24px rgba(0,0,0,.06)}
+    h1{margin:0 0 8px;font-size:18px;font-weight:800;color:var(--ink)}
+    p.muted{color:var(--muted);margin:2px 0 14px}
+    .ok{display:none;margin-top:8px;border:1px solid #c9ebda;background:#e9f8f1;border-radius:12px;padding:14px}
+    .ok b{color:var(--ok)}
+    .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    .btn{all:unset;display:inline-block;background:var(--brand);color:#fff;font-weight:700;padding:10px 14px;border-radius:10px;cursor:pointer}
+    .btn.secondary{background:#f4f6f8;color:#111;border:1px solid var(--line)}
+    code{background:#f4f6f8;border:1px solid var(--line);padding:3px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Criando sua base no seu Drive…</h1>
+      <p class="muted">Estamos gerando a sua cópia da planilha modelo. Isso costuma levar alguns segundos.</p>
+
+      <div id="ok" class="ok">
+        <b>✅ Cópia criada com sucesso!</b>
+        <p class="muted">Tudo certo. Agora você pode continuar no sistema ou abrir a planilha.</p>
+
+        <!-- ID -->
+        <p class="muted" style="margin-top:6px">
+          ID da sua planilha: <code id="sid">—</code>
+        </p>
+
+        <!-- BOTÕES logo abaixo do ID -->
+        <div class="row">
+          <a id="btnSystem" class="btn" target="_top" rel="noopener">Abrir o sistema</a>
+          <a id="btnSheet"  class="btn secondary" target="_blank" rel="noopener">Abrir minha planilha</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      // ===== CONFIG =====
+      // Deploy PRINCIPAL (sistema) como fallback
+      var PRINCIPAL_URL_FALLBACK =
+        'https://script.google.com/macros/s/AKfycbzARGSnhKYNBTFsTMf7DB5JdEgsCfwggZAjIjIvuvrl-RHaSL3EL58ssGtiAGpUsnPG/exec';
+
+      // Se o Dashboard abriu com ?return=<url>, usamos essa URL para o botão
+      var qs = new URLSearchParams(location.search);
+      var RETURN_URL = qs.get('return') || PRINCIPAL_URL_FALLBACK; // fallback = seu deploy principal
+      btnSystem.href = RETURN_URL; // botão "Abrir o sistema"
+
+
+      var KEY = 'controlese:ssid';
+      var okBox = document.getElementById('ok');
+      var sidEl = document.getElementById('sid');
+      var btnSystem = document.getElementById('btnSystem');
+      var btnSheet  = document.getElementById('btnSheet');
+
+      function notifyOpener(ssId){
+        try{
+          if (window.opener){
+            // compatibilidade com versões antigas/novas do dashboard
+            window.opener.postMessage({ type:'provision-ok', ssId:ssId }, '*');
+            window.opener.postMessage({ type:'controlese:provision-ok', ssId:ssId }, '*');
+          }
+        }catch(e){}
+      }
+      function saveFallback(ssId){
+        try{ localStorage.setItem(KEY, ssId); }catch(e){}
+      }
+      function showSuccess(ssId){
+        sidEl.textContent = ssId;
+        btnSystem.href = RETURN_URL; // << botão para o SISTEMA
+        btnSheet.href  = 'https://docs.google.com/spreadsheets/d/'+ssId+'/edit';
+        okBox.style.display = 'block';
+
+        // se abriu como popup, fecha depois de avisar
+        if (window.opener){
+          setTimeout(function(){ try{ window.close(); }catch(e){} }, 1500);
+        }
+      }
+      function onOk(res){
+        if (res && res.ok && res.ssId){
+          saveFallback(res.ssId);
+          notifyOpener(res.ssId);
+          showSuccess(res.ssId);
+        } else {
+          document.querySelector('h1').textContent = 'Não foi possível criar a cópia';
+          document.querySelector('.muted').textContent =
+            (res && res.err) ? String(res.err) : 'Tente novamente em instantes.';
+        }
+      }
+      function onFail(err){
+        document.querySelector('h1').textContent = 'Falha ao criar a cópia';
+        document.querySelector('.muted').textContent =
+          (err && (err.message||err)) || 'Erro desconhecido.';
+      }
+
+      // Dispara a criação da cópia
+      google.script.run
+        .withSuccessHandler(onOk)
+        .withFailureHandler(onFail)
+        .provisionMakeCopy(); // Code.gs
+    })();
+  </script>
+</body>
+</html>
