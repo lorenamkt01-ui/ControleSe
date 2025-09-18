@@ -140,6 +140,7 @@
       // API de login para o partial Login.html chamar
       onLoginSuccess(auth){
         this.state.token = auth.token;
+        this.navigate('dashboard');
         this.loadFilterOptions();
         this.attachRealtime();
         this.refreshAll();
@@ -189,6 +190,7 @@
       },
 
       loadFilterOptions(){
+        if(!this.state.token) return;
         this.ensureToken();
         google.script.run.withSuccessHandler(opts=>{
           try{ this.applyFilterOptions(opts); }catch(e){console.error(e)}
@@ -197,6 +199,7 @@
 
       // Atualizações (metrics + list)
       refreshAll(){
+        if(!this.state.token) return;
         this.ensureToken();
         const f = this.getFilters();
         this.state.lastFilters = f;
@@ -220,7 +223,7 @@
             Atualizado: ${new Date(m.ts).toLocaleString('pt-BR')}
           </div>
         </div>`;
-      el.innerHTML = 
+      el.innerHTML =
         card('Entradas', m.entradas, 'money-pos') +
         card('Saídas',   m.saidas,   'money-neg') +
         card('Saldo',    m.saldo,    (m.saldo>=0?'money-pos':'money-neg'));
@@ -228,7 +231,7 @@
 
     drawTable(res){
       // Se a sua tabela no HTML tiver id "tbl", troque a linha abaixo para '#tbl tbody'
-      const tb = document.querySelector('#tbl-lanc tbody'); 
+      const tb = document.querySelector('#tbl-lanc tbody');
       tb.innerHTML = '';
 
       // helpers
@@ -300,7 +303,7 @@
     document.getElementById('sec-provisionar').innerHTML = `<?!= include('Provisionar') ?>`;
 
     // Padrão ao abrir
-    App.navigate('dashboard');
+    // App.navigate('dashboard');
   </script>
 </body>
 </html>
