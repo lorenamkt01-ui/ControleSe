@@ -1,0 +1,225 @@
+<div id="form-root">
+  <style>
+    #form-root .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}
+    #form-root .col-12{grid-column:span 12}
+    #form-root .col-6{grid-column:span 6}
+    #form-root .col-4{grid-column:span 4}
+    #form-root .col-3{grid-column:span 3}
+    @media (max-width:900px){#form-root .col-6,#form-root .col-4,#form-root .col-3{grid-column:span 12}}
+    #form-root label{font-size:.9rem;color:var(--muted)}
+    #form-root input,#form-root select,#form-root textarea{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0f1116;color:var(--text)}
+    #form-root textarea{min-height:88px;resize:vertical}
+    #form-root .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    #form-root .actions{display:flex;gap:10px;margin-top:6px;flex-wrap:wrap}
+    #form-root .btn{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#1a1f2a;color:var(--text);cursor:pointer;font-weight:700}
+    #form-root .btn.danger{background:#2a1111;border-color:#3a1a1a}
+    #form-root .muted{color:var(--muted)}
+    #form-root .ok{background:#112a18;border:1px solid #1a3a24;color:#b8ffcf;padding:10px;border-radius:10px;display:none}
+    #form-root .err{background:#2a1111;border:1px solid #3a1a1a;color:#ffb4b4;padding:10px;border-radius:10px;display:none}
+  </style>
+
+  <div class="grid">
+    <div class="col-12"><h3 style="margin:6px 0">Novo lançamento / Editar</h3></div>
+
+    <div class="col-3">
+      <label for="f-data">Data</label>
+      <input id="f-data" placeholder="dd/MM/aaaa" inputmode="numeric"/>
+    </div>
+    <div class="col-9">
+      <label for="f-desc">Descrição</label>
+      <input id="f-desc" placeholder="Ex.: Supermercado" />
+    </div>
+
+    <div class="col-4">
+      <label for="f-valor">Valor Total</label>
+      <input id="f-valor" placeholder="0,00" inputmode="decimal"/>
+    </div>
+    <div class="col-4">
+      <label for="f-tipo">Tipo</label>
+      <select id="f-tipo"><option>Saída</option><option>Entrada</option></select>
+    </div>
+    <div class="col-4">
+      <label for="f-forma">Forma de Pagamento</label>
+      <input id="f-forma" list="dl-forma" placeholder="Pix, Cartão..."/>
+      <datalist id="dl-forma"></datalist>
+    </div>
+
+    <div class="col-4">
+      <label for="f-categoria">Categoria</label>
+      <input id="f-categoria" list="dl-categoria" placeholder="Alimentação, Pessoal..."/>
+      <datalist id="dl-categoria"></datalist>
+    </div>
+    <div class="col-4">
+      <label for="f-subcat">Subcategoria</label>
+      <input id="f-subcat" list="dl-subcat" placeholder="Mercado, Educação..."/>
+      <datalist id="dl-subcat"></datalist>
+    </div>
+
+    <div class="col-4">
+      <label for="f-parcelado" class="row"><input type="checkbox" id="f-parcelado"/> Parcelado?</label>
+      <div class="row">
+        <label for="f-parcelas" class="muted">Parcelas</label>
+        <input id="f-parcelas" type="number" min="1" value="1" style="max-width:110px"/>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <label for="f-obs">Observações</label>
+      <textarea id="f-obs" placeholder="Notas adicionais..."></textarea>
+    </div>
+
+    <div class="col-12 row" style="justify-content:space-between">
+      <label class="row" style="gap:8px"><input type="checkbox" id="f-status"/> Pago/Concluído</label>
+      <div class="muted">Chave natural: <code id="f-key">—</code></div>
+    </div>
+
+    <div class="col-12 actions">
+      <button class="btn" id="btn-save">Salvar</button>
+      <button class="btn danger" id="btn-del">Excluir</button>
+      <button class="btn" id="btn-clear">Limpar</button>
+      <span class="ok" id="msg-ok"></span>
+      <span class="err" id="msg-err"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+  const Formulario = {
+    els: {},
+
+    init(){
+      const $ = id => document.getElementById(id);
+      this.els = {
+        data: $('f-data'), desc: $('f-desc'), valor: $('f-valor'), tipo: $('f-tipo'),
+        forma: $('f-forma'), categoria: $('f-categoria'), subcat: $('f-subcat'),
+        parcelado: $('f-parcelado'), parcelas: $('f-parcelas'), obs: $('f-obs'), status: $('f-status'),
+        key: $('f-key'),
+        ok: $('msg-ok'), err: $('msg-err'),
+        save: $('btn-save'), del: $('btn-del'), clear: $('btn-clear'),
+        dlForma: $('dl-forma'), dlCat: $('dl-categoria'), dlSub: $('dl-subcat')
+      };
+
+      // binds
+      this.els.save.addEventListener('click', ()=>this.save());
+      this.els.del.addEventListener('click', ()=>this.remove());
+      this.els.clear.addEventListener('click', ()=>this.clear());
+
+      this.els.valor.addEventListener('blur', ()=>{
+        const v = this.parseMoney(this.els.valor.value);
+        this.els.valor.value = this.fmtMoneyBR(v);
+        this.updateKeyPreview();
+      });
+      this.els.data.addEventListener('blur', ()=>this.updateKeyPreview());
+      this.els.desc.addEventListener('blur', ()=>this.updateKeyPreview());
+
+      // Parcelas habilita/desabilita
+      const syncParcelas = ()=>{ this.els.parcelas.disabled = !this.els.parcelado.checked; if(!this.els.parcelado.checked) this.els.parcelas.value = 1; };
+      this.els.parcelado.addEventListener('change', syncParcelas); syncParcelas();
+
+      // Preencher datalists
+      setTimeout(()=>this.loadOptions(), 150);
+    },
+
+    fmtMoneyBR(n){ try { return Number(n||0).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2}); } catch(_) { return n } },
+    parseMoney(s){ if (typeof s === 'number') return s; const x = String(s).replace(/\./g,'').replace(',','.'); const n = Number(x); return isNaN(n)?0:n; },
+
+    parseDateBR(s){
+      if (!s) return null; const m = String(s).match(/^(\d{2})\/(\d{2})\/(\d{4})$/); if (!m) return null;
+      return `${m[1]}/${m[2]}/${m[3]}`; // mantemos como texto dd/MM/aaaa para o backend
+    },
+
+    buildPayload(){
+      const data = this.parseDateBR(this.els.data.value);
+      if (!data) throw new Error('Data inválida. Use dd/MM/aaaa.');
+      const desc = (this.els.desc.value||'').trim(); if (!desc) throw new Error('Descrição obrigatória.');
+      const valor = this.parseMoney(this.els.valor.value); if (!valor) throw new Error('Valor deve ser maior que zero.');
+      const tipo = this.els.tipo.value || 'Saída';
+      const categoria = (this.els.categoria.value||'').trim();
+      const subcategoria = (this.els.subcat.value||'').trim();
+      const forma = (this.els.forma.value||'').trim();
+      const parcelado = !!this.els.parcelado.checked; const parcelas = Math.max(1, Number(this.els.parcelas.value||1));
+      const obs = (this.els.obs.value||'').trim();
+      const status = !!this.els.status.checked;
+
+      return {
+        'Data': data,
+        'Descrição': desc,
+        'Valor Total': valor,
+        'Parcelado': parcelado,
+        'Parcelas': parcelas,
+        'Tipo': tipo,
+        'Categoria': categoria,
+        'Subcategoria': subcategoria,
+        'Forma Pagamento': forma,
+        'Observações': obs,
+        'Status': status
+      };
+    },
+
+    updateKeyPreview(){
+      try{
+        const d = this.parseDateBR(this.els.data.value) || this.els.data.value;
+        const desc = (this.els.desc.value||'').trim();
+        const v = this.parseMoney(this.els.valor.value);
+        const key = [d || 'DD/MM/AAAA', desc || '—', String(v)].join('||');
+        this.els.key.textContent = key;
+      }catch(_){ this.els.key.textContent = '—'; }
+    },
+
+    setOk(msg){ this.els.ok.textContent = msg; this.els.ok.style.display = 'inline-block'; this.els.err.style.display='none'; },
+    setErr(msg){ this.els.err.textContent = msg; this.els.err.style.display = 'inline-block'; this.els.ok.style.display='none'; },
+
+    save(){
+      try { App.ensureToken(); } catch(e){ return; }
+      let payload;
+      try { payload = this.buildPayload(); }
+      catch(e){ return this.setErr(e.message||'Campos inválidos'); }
+
+      this.setErr(''); this.setOk('');
+      google.script.run
+        .withSuccessHandler((r)=>{
+          if (r && r.ok){ this.setOk('Lançamento salvo!'); App.refreshAll(); }
+          else { this.setErr(r && r.msg ? r.msg : 'Falha ao salvar.'); }
+        })
+        .withFailureHandler((e)=>this.setErr(e && e.message ? e.message : 'Erro no servidor.'))
+        .upsertLancamento(App.state.token, payload);
+    },
+
+    remove(){
+      try { App.ensureToken(); } catch(e){ return; }
+      const d = this.parseDateBR(this.els.data.value);
+      const desc = (this.els.desc.value||'').trim();
+      const v = this.parseMoney(this.els.valor.value);
+      if (!d || !desc || !v) return this.setErr('Para excluir informe Data, Descrição e Valor.');
+      const key = [d, desc, String(v)].join('||');
+      if (!confirm('Excluir este lançamento?')) return;
+
+      this.setErr(''); this.setOk('');
+      google.script.run
+        .withSuccessHandler((r)=>{
+          if (r && r.ok){ this.setOk('Lançamento excluído!'); this.clear(); App.refreshAll(); }
+          else { this.setErr(r && r.msg ? r.msg : 'Não foi possível excluir.'); }
+        })
+        .withFailureHandler((e)=>this.setErr(e && e.message ? e.message : 'Erro no servidor.'))
+        .deleteLancamento(App.state.token, key);
+    },
+
+    clear(){
+      const {data,desc,valor,tipo,forma,categoria,subcat,parcelado,parcelas,obs,status} = this.els;
+      data.value=''; desc.value=''; valor.value=''; tipo.value='Saída'; forma.value=''; categoria.value=''; subcat.value=''; parcelado.checked=false; parcelas.value=1; obs.value=''; status.checked=false; this.updateKeyPreview();
+    },
+
+    loadOptions(){
+      try { App.ensureToken(); } catch(e){ return; }
+      google.script.run.withSuccessHandler((opts)=>{
+        const fill = (dl, arr)=>{ dl.innerHTML = (arr||[]).map(v=>`<option value="${String(v)}"></option>`).join(''); };
+        fill(this.els.dlForma, opts.formas);
+        fill(this.els.dlCat, opts.categorias);
+        fill(this.els.dlSub, opts.subcategorias);
+      }).withFailureHandler((e)=>console.error(e)).getFilterOptions(App.state.token);
+    }
+  };
+
+  try { Formulario.init(); } catch(e){ console.error(e); }
+  window.Formulario = Formulario;
+</script>
