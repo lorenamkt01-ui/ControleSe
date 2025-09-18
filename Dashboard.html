@@ -1,0 +1,155 @@
+<div id="dashboard-root">
+  <style>
+    #dashboard-root .toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:6px 0}
+    #dashboard-root .left,#dashboard-root .right{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    #dashboard-root .btn{padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:#1a1f2a;color:var(--text);cursor:pointer}
+    #dashboard-root .btn[disabled]{opacity:.6;cursor:not-allowed}
+    #dashboard-root .muted{color:var(--muted)}
+    #dashboard-root .pill{padding:6px 10px;border:1px solid var(--line);border-radius:999px}
+    #dashboard-root .canvas-wrap{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px}
+  </style>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="left">
+      <button class="btn" id="btn-refresh-now">Atualizar agora</button>
+      <button class="btn" id="btn-export">Exportar CSV</button>
+      <span class="muted" id="lbl-updated">—</span>
+    </div>
+    <div class="right">
+      <span class="pill">Página <strong id="pg-cur">1</strong> de <strong id="pg-max">1</strong></span>
+      <button class="btn" id="pg-prev">◀</button>
+      <button class="btn" id="pg-next">▶</button>
+    </div>
+  </div>
+
+  <!-- Mini gráfico Top Categorias -->
+  <div class="canvas-wrap">
+    <div class="muted" style="margin-bottom:6px">Top categorias (saldo por categoria no filtro atual)</div>
+    <canvas id="chart-topcat" height="130"></canvas>
+  </div>
+</div>
+
+<script>
+  // Módulo Dashboard: paginação, exportação e chart leve
+  const Dashboard = {
+    state: { page: 1, pageSize: 200, total: 0, lastMetrics: null, lastList: null },
+    els: {},
+
+    init(){
+      const $ = id => document.getElementById(id);
+      this.els = {
+        refresh: $('btn-refresh-now'),
+        exportBtn: $('btn-export'),
+        updated: $('lbl-updated'),
+        pgCur: $('pg-cur'), pgMax: $('pg-max'), pgPrev: $('pg-prev'), pgNext: $('pg-next'),
+        chart: $('chart-topcat')
+      };
+      this.els.refresh.addEventListener('click', ()=>this.refresh());
+      this.els.exportBtn.addEventListener('click', ()=>this.exportCsv());
+      this.els.pgPrev.addEventListener('click', ()=>this.gotoPage(this.state.page-1));
+      this.els.pgNext.addEventListener('click', ()=>this.gotoPage(this.state.page+1));
+
+      // Primeira carga deferida: deixa o Index rodar, depois sincroniza a paginação
+      setTimeout(()=>{ this.syncFromApp(); }, 200);
+    },
+
+    syncFromApp(){
+      try {
+        // tenta inferir total renderizado (não temos aqui), então faz um refresh completo
+        this.refresh();
+      } catch(e){ console.error(e); }
+    },
+
+    getFilters(){
+      const f = App.getFilters();
+      f.page = this.state.page; f.pageSize = this.state.pageSize;
+      return f;
+    },
+
+    refresh(){
+      try { App.ensureToken(); } catch(e){ return; }
+      const f = this.getFilters();
+
+      google.script.run.withSuccessHandler(m => {
+        this.state.lastMetrics = m; App.drawKpis(m); this.drawTopCat(m);
+        this.markUpdated(m.ts);
+      }).withFailureHandler(App._fail).getMetrics(App.state.token, f);
+
+      google.script.run.withSuccessHandler(res => {
+        this.state.lastList = res; App.drawTable(res);
+        this.state.total = res.total; this.updatePager();
+        this.markUpdated(new Date().toISOString());
+      }).withFailureHandler(App._fail).listLancamentos(App.state.token, f);
+    },
+
+    markUpdated(ts){
+      try { this.els.updated.textContent = 'Atualizado: ' + new Date(ts).toLocaleString('pt-BR'); } catch(_){ }
+    },
+
+    updatePager(){
+      const totalPages = Math.max(1, Math.ceil(this.state.total / this.state.pageSize));
+      this.els.pgCur.textContent = String(this.state.page);
+      this.els.pgMax.textContent = String(totalPages);
+      this.els.pgPrev.disabled = this.state.page <= 1;
+      this.els.pgNext.disabled = this.state.page >= totalPages;
+    },
+
+    gotoPage(p){
+      const totalPages = Math.max(1, Math.ceil(this.state.total / this.state.pageSize));
+      if (p < 1 || p > totalPages) return;
+      this.state.page = p; this.refresh();
+    },
+
+    exportCsv(){
+      if (!this.state.lastList) return alert('Nada para exportar.');
+      const rows = this.state.lastList.items || [];
+      const header = ['Data','Descrição','Valor','Tipo','Categoria','Subcategoria','Forma'];
+      const csv = [header.join(',')].concat(rows.map(it => [
+        it.data || '',
+        Dashboard.csvEscape(it.descricao||''),
+        String(it.valor).replace('.',','),
+        it.tipo||'', it.categoria||'', it.subcategoria||'', it.forma||''
+      ].join(','))).join('\n');
+      const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'controlese_export.csv'; a.click();
+      setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    },
+
+    csvEscape(s){
+      const t = String(s).replaceAll('"','""');
+      return '"'+t+'"';
+    },
+
+    drawTopCat(m){
+      try {
+        const ctx = this.els.chart.getContext('2d');
+        // limpa
+        ctx.clearRect(0,0,this.els.chart.width, this.els.chart.height);
+        const W = this.els.chart.width; const H = this.els.chart.height;
+        const data = (m.topCategorias||[]).slice().reverse(); // desenha de baixo pra cima
+        if (!data.length) return;
+        const max = Math.max(...data.map(d=>Math.abs(d.valor))) || 1;
+        const pad = 8; const barH = Math.floor((H - pad*(data.length+1)) / data.length);
+        data.forEach((d, i)=>{
+          const y = pad + i*(barH+pad);
+          const w = Math.floor((Math.abs(d.valor)/max) * (W - 120));
+          // eixo zero ao centro? aqui simples: barras positivas verdes, negativas vermelhas
+          ctx.fillStyle = (d.valor >= 0) ? '#22c55e' : '#ef4444';
+          ctx.fillRect(110, y, Math.max(2, w), barH);
+          // labels
+          ctx.fillStyle = '#8b93a7'; ctx.font = '12px system-ui,Segoe UI,Roboto,Arial';
+          ctx.fillText(String(d.categoria).slice(0,14), 4, y+barH-2);
+          ctx.textAlign = 'right';
+          ctx.fillText((d.valor||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}), W-6, y+barH-2);
+          ctx.textAlign = 'start';
+        });
+      } catch(e){ console.error(e); }
+    }
+  };
+
+  // Inicializa módulo
+  try { Dashboard.init(); } catch(e){ console.error(e); }
+  window.Dashboard = Dashboard;
+</script>
