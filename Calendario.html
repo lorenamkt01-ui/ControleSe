@@ -1,0 +1,100 @@
+<div id="calendar-root">
+  <style>
+    #calendar-root .wrap{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    #calendar-root .btn{padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:#1a1f2a;color:var(--text);cursor:pointer}
+    #calendar-root .group{display:flex;gap:8px;align-items:center;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:8px}
+    #calendar-root input{padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f1116;color:var(--text)}
+    #calendar-root .muted{color:var(--muted)}
+  </style>
+
+  <div class="wrap" role="group" aria-label="Atalhos de período">
+    <div class="group">
+      <button class="btn" onclick="Calendario.setHoje()">Hoje</button>
+      <button class="btn" onclick="Calendario.setUltimos(7)">Últimos 7</button>
+      <button class="btn" onclick="Calendario.setUltimos(30)">Últimos 30</button>
+      <button class="btn" onclick="Calendario.setEsteMes()">Este mês</button>
+      <button class="btn" onclick="Calendario.setMesPassado()">Mês passado</button>
+      <button class="btn" onclick="Calendario.setEsteAno()">Este ano</button>
+      <button class="btn" onclick="Calendario.limpar()">Limpar</button>
+    </div>
+    <div class="group">
+      <span class="muted">Ou escolha manual:</span>
+      <input id="cal-ini" placeholder="Início (dd/MM/aaaa)" inputmode="numeric"/>
+      <input id="cal-fim" placeholder="Fim (dd/MM/aaaa)" inputmode="numeric"/>
+      <button class="btn" onclick="Calendario.aplicar()">Aplicar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const Calendario = {
+    els: {},
+    init(){
+      const $ = id => document.getElementById(id);
+      this.els = { ini: $('cal-ini'), fim: $('cal-fim') };
+      // Prefill com filtros globais atuais
+      try{
+        const gi = document.getElementById('f-data-ini');
+        const gf = document.getElementById('f-data-fim');
+        if (gi && gf){ this.els.ini.value = gi.value; this.els.fim.value = gf.value; }
+      }catch(_){ }
+      // Enter aplica
+      [this.els.ini, this.els.fim].forEach(el=> el.addEventListener('keydown', (e)=>{ if(e.key==='Enter') this.aplicar(); }));
+    },
+
+    // Helpers de data
+    pad(n){ return String(n).padStart(2,'0'); },
+    toBR(d){ return `${this.pad(d.getDate())}/${this.pad(d.getMonth()+1)}/${d.getFullYear()}`; },
+    startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); },
+    endOfMonth(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0); },
+
+    setHoje(){
+      const now = new Date();
+      const br = this.toBR(now);
+      this.applyToGlobal(br, br);
+    },
+    setUltimos(n){
+      const end = new Date();
+      const start = new Date(); start.setDate(end.getDate() - (n-1));
+      this.applyToGlobal(this.toBR(start), this.toBR(end));
+    },
+    setEsteMes(){
+      const now = new Date();
+      const a = this.startOfMonth(now);
+      const b = this.endOfMonth(now);
+      this.applyToGlobal(this.toBR(a), this.toBR(b));
+    },
+    setMesPassado(){
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth()-1, 1);
+      const last = new Date(now.getFullYear(), now.getMonth(), 0);
+      this.applyToGlobal(this.toBR(first), this.toBR(last));
+    },
+    setEsteAno(){
+      const a = new Date(new Date().getFullYear(), 0, 1);
+      const b = new Date();
+      this.applyToGlobal(this.toBR(a), this.toBR(b));
+    },
+    limpar(){ this.applyToGlobal('', ''); },
+
+    aplicar(){
+      const ini = (this.els.ini.value||'').trim();
+      const fim = (this.els.fim.value||'').trim();
+      this.applyToGlobal(ini, fim);
+    },
+
+    applyToGlobal(ini, fim){
+      // Sincroniza com os inputs globais e dispara refresh
+      const gi = document.getElementById('f-data-ini');
+      const gf = document.getElementById('f-data-fim');
+      if (gi) gi.value = ini; if (gf) gf.value = fim;
+      try { App.refreshAll(); } catch(e){ console.error(e); }
+      // Atualiza espelho local
+      if (this.els.ini) this.els.ini.value = ini;
+      if (this.els.fim) this.els.fim.value = fim;
+    }
+  };
+
+  try { Calendario.init(); } catch(e){ console.error(e); }
+  window.Calendario = Calendario;
+</script>
