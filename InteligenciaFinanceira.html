@@ -1,0 +1,230 @@
+<div id="intel-root">
+  <style>
+    #intel-root .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+    #intel-root .col-12{grid-column:span 12}
+    #intel-root .col-6{grid-column:span 6}
+    @media (max-width:900px){#intel-root .col-6{grid-column:span 12}}
+    #intel-root .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
+    #intel-root h3{margin:0 0 8px 0}
+    #intel-root .muted{color:var(--muted)}
+    #intel-root ul{margin:0 0 0 16px}
+  </style>
+
+  <div class="grid">
+    <div class="col-12">
+      <div class="panel">
+        <h3>Insights rápidos</h3>
+        <div class="muted" id="intel-updated">—</div>
+        <ul id="intel-list"></ul>
+      </div>
+    </div>
+
+    <div class="col-6">
+      <div class="panel">
+        <h3>Entradas x Saídas — últimos 6 meses</h3>
+        <canvas id="intel-bar" height="200"></canvas>
+      </div>
+    </div>
+    <div class="col-6">
+      <div class="panel">
+        <h3>Saldo acumulado — últimos 90 dias</h3>
+        <canvas id="intel-line" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const Inteligencia = {
+    els: {},
+    init(){
+      const $ = id => document.getElementById(id);
+      this.els = {
+        list: $('intel-list'), updated: $('intel-updated'),
+        bar: $('intel-bar'), line: $('intel-line')
+      };
+      // carrega na abertura
+      setTimeout(()=>this.refresh(), 200);
+    },
+
+    fmt(n){ try { return Number(n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}) } catch(_) { return n } },
+
+    refresh(){
+      try { App.ensureToken(); } catch(e){ return; }
+
+      // Janela de análise
+      const end = new Date();
+      const start180 = new Date(); start180.setDate(end.getDate()-179);
+      const start90 = new Date(); start90.setDate(end.getDate()-89);
+
+      const pad = n => String(n).padStart(2,'0');
+      const toBR = d => `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+
+      const f180 = Object.assign(App.getFilters(), { dataIni: toBR(start180), dataFim: toBR(end), page:1, pageSize:1000 });
+
+      // 1) Lista completa 180d p/ agregações
+      google.script.run.withSuccessHandler(res=>{
+        this.computeInsights(res.items||[], start180, end);
+        this.drawBars(res.items||[], end);
+        this.drawLine(res.items||[], start90, end);
+        this.els.updated.textContent = 'Atualizado: ' + new Date().toLocaleString('pt-BR');
+      }).withFailureHandler(App._fail).listLancamentos(App.state.token, f180);
+    },
+
+    // ========== INSIGHTS ==========
+    computeInsights(items, start, end){
+      // Mês atual vs anterior
+      const ym = d => d.getFullYear()+'-'+(d.getMonth()+1);
+      const toDate = s => { const m = String(s).match(/(\d{2})\/(\d{2})\/(\d{4})/); if (!m) return null; return new Date(Number(m[3]), Number(m[2])-1, Number(m[1])); };
+
+      // bucket por mês
+      const monthAgg = {};
+      const day30 = new Date(end); day30.setDate(end.getDate()-29);
+      let gasto30 = 0; let diasComGasto = 0;
+
+      const catMonth = {}; // categoria do mês corrente
+      const curYM = ym(end);
+
+      items.forEach(it=>{
+        const d = toDate(it.data || it['Data']); if(!d) return;
+        const key = ym(d);
+        if (!monthAgg[key]) monthAgg[key] = { in:0, out:0 };
+        if (String(it.tipo||it['Tipo']).toLowerCase()==='entrada') monthAgg[key].in += Number(it.valor||it['Valor Total']||0);
+        else monthAgg[key].out += Number(it.valor||it['Valor Total']||0);
+
+        if (key===curYM){
+          const c = it.categoria || it['Categoria'] || '—';
+          const v = Number(it.valor||it['Valor Total']||0);
+          const sign = (String(it.tipo||it['Tipo']).toLowerCase()==='entrada') ? 1 : -1;
+          catMonth[c] = (catMonth[c]||0) + v*sign;
+        }
+
+        if (d >= day30 && String(it.tipo||it['Tipo']).toLowerCase()!=='entrada'){
+          gasto30 += Number(it.valor||it['Valor Total']||0);
+          diasComGasto++;
+        }
+      });
+
+      // identifica meses
+      const months = Object.keys(monthAgg).map(s=>{
+        const [y,m] = s.split('-').map(Number); return { y, m, s };
+      }).sort((a,b)=> a.y-b.y || a.m-b.m);
+      const last = months[months.length-1];
+      const prev = months[months.length-2];
+
+      const resumo = [];
+      if (last){
+        const cur = monthAgg[last.s];
+        const saldoCur = (cur.in - cur.out);
+        resumo.push(`Saldo do mês (${String(last.m).padStart(2,'0')}/${last.y}): ${this.fmt(saldoCur)}.`);
+      }
+      if (last && prev){
+        const cur = monthAgg[last.s]; const old = monthAgg[prev.s];
+        const gastoVar = (cur.out - old.out);
+        const sinal = gastoVar>0 ? '↑' : (gastoVar<0 ? '↓' : '→');
+        resumo.push(`Variação de gastos vs mês anterior: ${sinal} ${this.fmt(Math.abs(gastoVar))}.`);
+      }
+
+      if (diasComGasto){
+        const mediaDia = gasto30 / Math.max(1, diasComGasto);
+        resumo.push(`Média diária de gastos nos últimos 30 dias: ${this.fmt(mediaDia)}.`);
+      }
+
+      // Top categoria do mês corrente por impacto (saldo)
+      const top = Object.entries(catMonth).sort((a,b)=> Math.abs(b[1]) - Math.abs(a[1]))[0];
+      if (top) resumo.push(`Maior impacto no mês: ${top[0]} (${this.fmt(top[1])}).`);
+
+      this.els.list.innerHTML = resumo.map(s=>`<li>${this.escape(s)}</li>`).join('');
+    },
+
+    // ========== GRÁFICO BARRAS (6 meses) ==========
+    drawBars(items, end){
+      const ctx = this.els.bar.getContext('2d');
+      const pad = 20; const W = this.els.bar.width; const H = this.els.bar.height; ctx.clearRect(0,0,W,H);
+      const ym = d => d.getFullYear()*12 + d.getMonth();
+
+      // preparar 6 meses
+      const months = []; const now = new Date(end);
+      for (let i=5; i>=0; i--){ const d = new Date(now.getFullYear(), now.getMonth()-i, 1); months.push({ y:d.getFullYear(), m:d.getMonth(), in:0, out:0, label: `${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}` }); }
+
+      const toDate = s => { const m = String(s).match(/(\d{2})\/(\d{2})\/(\d{4})/); if (!m) return null; return new Date(Number(m[3]), Number(m[2])-1, Number(m[1])); };
+      items.forEach(it=>{
+        const d = toDate(it.data || it['Data']); if(!d) return;
+        const idx = months.findIndex(x=> x.y===d.getFullYear() && x.m===d.getMonth());
+        if (idx<0) return;
+        const val = Number(it.valor||it['Valor Total']||0);
+        if (String(it.tipo||it['Tipo']).toLowerCase()==='entrada') months[idx].in += val; else months[idx].out += val;
+      });
+
+      const max = Math.max(1, ...months.map(x=> Math.max(x.in, x.out)));
+      const bw = Math.floor((W - pad*2) / (months.length*2 + months.length)); // barras duplas + espaçamento
+      let x = pad;
+
+      ctx.font = '12px system-ui,Segoe UI,Roboto,Arial';
+      ctx.fillStyle = '#8b93a7';
+      ctx.textAlign = 'center';
+
+      months.forEach(m=>{
+        const hIn = Math.round((m.in/max) * (H - 40));
+        const hOut = Math.round((m.out/max) * (H - 40));
+        // Saídas em vermelho, Entradas em verde
+        ctx.fillStyle = '#22c55e'; ctx.fillRect(x, H-20-hIn, bw, hIn);
+        ctx.fillStyle = '#ef4444'; ctx.fillRect(x+bw+4, H-20-hOut, bw, hOut);
+        // label
+        ctx.fillStyle = '#8b93a7';
+        ctx.fillText(m.label, x + bw, H-4);
+        x += bw*2 + 12;
+      });
+    },
+
+    // ========== GRÁFICO LINHA (saldo acumulado 90 dias) ==========
+    drawLine(items, start, end){
+      const ctx = this.els.line.getContext('2d'); ctx.clearRect(0,0,this.els.line.width, this.els.line.height);
+      const W = this.els.line.width; const H = this.els.line.height; const pad = 24;
+      const toDate = s => { const m = String(s).match(/(\d{2})\/(\d{2})\/(\d{4})/); if (!m) return null; return new Date(Number(m[3]), Number(m[2])-1, Number(m[1])); };
+
+      // bucket diário
+      const days = []; const nDays = Math.round((end - start)/(24*3600*1000)) + 1;
+      for (let i=0;i<nDays;i++){ const d = new Date(start.getFullYear(), start.getMonth(), start.getDate()+i); days.push({ d, saldo:0 }); }
+      items.forEach(it=>{
+        const d = toDate(it.data || it['Data']); if(!d || d<start || d>end) return;
+        const idx = Math.round((d - start)/(24*3600*1000));
+        const v = Number(it.valor||it['Valor Total']||0);
+        days[idx].saldo += (String(it.tipo||it['Tipo']).toLowerCase()==='entrada') ? v : -v;
+      });
+
+      // acumulado
+      let acc = 0; for (const day of days){ acc += day.saldo; day.acc = acc; }
+      const max = Math.max(...days.map(d=>d.acc), 0); const min = Math.min(...days.map(d=>d.acc), 0);
+      const range = Math.max(1, max - min);
+
+      // escala
+      const sx = (W - pad*2) / Math.max(1, days.length-1);
+      const sy = (H - pad*2) / range;
+
+      // eixo
+      const yZero = H - pad - (0 - min)*sy;
+      const axis = (y)=>{ ctx.strokeStyle = '#1f2430'; ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W-pad, y); ctx.stroke(); };
+      axis(yZero);
+
+      // linha
+      ctx.strokeStyle = '#22c55e'; ctx.beginPath();
+      days.forEach((day,i)=>{
+        const x = pad + i*sx; const y = H - pad - (day.acc - min)*sy;
+        if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+
+      // pontos esparsos
+      ctx.fillStyle = '#22c55e';
+      for (let i=0;i<days.length;i+=Math.ceil(days.length/12)){
+        const x = pad + i*sx; const y = H - pad - (days[i].acc - min)*sy; ctx.beginPath(); ctx.arc(x,y,2,0,Math.PI*2); ctx.fill();
+      }
+    },
+
+    escape(s){ return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;') }
+  };
+
+  try { Inteligencia.init(); } catch(e){ console.error(e); }
+  window.Inteligencia = Inteligencia;
+</script>
